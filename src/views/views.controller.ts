@@ -1,0 +1,128 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+  Res,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { diskStorage } from 'multer';
+import * as fs from 'fs';
+import * as path from 'path';
+import { ConvertService } from '../convert/convert.service';
+import { renderUploadPage } from './templates/upload-page';
+import { renderResultPage } from './templates/result-page';
+
+const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
+const OUTPUT_ROOT = path.join(process.cwd(), 'output');
+
+@Controller()
+export class ViewsController {
+  constructor(private readonly convertService: ConvertService) {}
+
+  @Get()
+  index(@Res() res: Response) {
+    res.type('html').send(renderUploadPage());
+  }
+
+  @Post('upload')
+  @UseInterceptors(
+    FilesInterceptor('files', 50, {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          const sessionId = Date.now().toString();
+          (req as any)._sessionId = (req as any)._sessionId || sessionId;
+          const dir = path.join(UPLOAD_ROOT, (req as any)._sessionId);
+          fs.mkdirSync(dir, { recursive: true });
+          cb(null, dir);
+        },
+        filename: (req, file, cb) => {
+          // giữ nguyên tên gốc (đã decode utf8) để file pdf xuất ra có tên tương ứng
+          const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+          cb(null, original);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        if (path.extname(original).toLowerCase() !== '.docx') {
+          return cb(new BadRequestException(`File "${original}" không phải .docx`), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async upload(
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body('outputDir') customOutputDir: string,
+    @Res() res: Response,
+  ) {
+    if (!files || files.length === 0) {
+      return res.type('html').send(renderUploadPage('Bạn chưa chọn file .docx nào.'));
+    }
+
+    const sessionId = path.basename(path.dirname(files[0].path));
+
+    // Nếu người dùng nhập đường dẫn cụ thể (vd: E:\THPT NQ) thì lưu thẳng vào đó,
+    // không thì lưu tạm vào ./output/<sessionId>
+    const hasCustomPath = !!(customOutputDir && customOutputDir.trim());
+    const targetDir = hasCustomPath
+      ? path.resolve(customOutputDir.trim())
+      : path.join(OUTPUT_ROOT, sessionId);
+
+    let results;
+    try {
+      results = await this.convertService.convertMany(
+        files.map((f) => f.path),
+        targetDir,
+      );
+    } catch (err: any) {
+      return res
+        .type('html')
+        .send(renderUploadPage(`Không thể lưu vào đường dẫn "${customOutputDir}": ${err.message}`));
+    }
+
+    const viewResults = results.map((r) => ({
+      name: path.basename(r.input),
+      success: r.success,
+      error: r.error,
+      downloadUrl: r.success
+        ? hasCustomPath
+          ? `/download-file?path=${encodeURIComponent(r.output!)}`
+          : `/download/${sessionId}/${encodeURIComponent(path.basename(r.output!))}`
+        : null,
+    }));
+
+    res.type('html').send(renderResultPage(viewResults, hasCustomPath ? targetDir : null));
+  }
+
+  @Get('download/:sessionId/:filename')
+  download(@Param('sessionId') sessionId: string, @Param('filename') filename: string, @Res() res: Response) {
+    // chặn path traversal
+    if (sessionId.includes('..') || filename.includes('..')) {
+      throw new BadRequestException('Đường dẫn không hợp lệ');
+    }
+    const filePath = path.join(OUTPUT_ROOT, sessionId, filename);
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException('Không tìm thấy file');
+    }
+    res.download(filePath, filename);
+  }
+
+  @Get('download-file')
+  downloadCustom(@Query('path') filePath: string, @Res() res: Response) {
+    if (!filePath || path.extname(filePath).toLowerCase() !== '.pdf') {
+      throw new BadRequestException('Đường dẫn file không hợp lệ');
+    }
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException('Không tìm thấy file');
+    }
+    res.download(filePath, path.basename(filePath));
+  }
+}
