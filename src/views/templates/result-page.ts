@@ -26,7 +26,7 @@ export function renderResultPage(items: ResultViewItem[], savedPath: string | nu
       return `
         <div class="result-row">
           <div class="name">${dot}<span>${escapeHtml(item.name)}</span></div>
-          <div style="display:flex; align-items:center; gap:14px;">
+          <div class="result-actions">
             ${badge}
             ${download}
           </div>
@@ -35,11 +35,14 @@ export function renderResultPage(items: ResultViewItem[], savedPath: string | nu
     .join('');
 
   const body = `
-    <h1>Kết quả convert</h1>
+    <div class="eyebrow">PROCESS COMPLETE</div>
+    <h1>Kết quả xử lý</h1>
     <p class="summary">${okCount}/${items.length} file convert thành công</p>
     ${savedPathBanner}
     <div class="result-list">${rows}</div>
-    <a class="btn secondary" href="/">Convert file khác</a>
+    <div class="stack-actions">
+      <a class="btn secondary" href="/">Xử lý file khác</a>
+    </div>
   `;
 
   return layout('Kết quả convert', body);

@@ -65,6 +65,38 @@ Response:
 }
 ```
 
+## Sao chép PDF có mật khẩu
+
+Service này dùng Python, thư viện `pypdf` và `cryptography` để mở PDF bằng mật khẩu và ghi nội dung sang
+một file PDF mới (file mới không còn mã hóa). Đường dẫn nhập vào là **thư mục đích**,
+file mới giữ nguyên tên file nguồn. Nếu bỏ trống, file được lưu vào `./output/pdf/copy`.
+
+Cài dependency:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Nếu lệnh Python không có tên `python`, cấu hình đường dẫn Python:
+
+```powershell
+$env:PYTHON_BIN = 'C:\Path\to\python.exe'
+```
+
+Gọi API:
+
+```bash
+curl -X POST http://localhost:3000/pdf/copy \
+  -H "Content-Type: application/json" \
+  -d '{
+        "sourcePath": "C:\\input\\protected.pdf",
+        "password": "mat-khau",
+        "outputDir": "E:\\output\\pdf\\copy"
+      }'
+```
+
+API tự tạo thư mục đích nếu chưa có, không ghi đè file nguồn và không ghi mật khẩu vào log.
+
 ## Ghi chú
 - Cả batch (ví dụ 30 file) được convert trong **1 lần gọi soffice** để nhanh và tránh lỗi khóa profile khi
   chạy nhiều tiến trình LibreOffice song song.

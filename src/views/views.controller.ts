@@ -9,14 +9,16 @@ import {
   Query,
   Res,
   UploadedFiles,
+  UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { diskStorage } from 'multer';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConvertService } from '../convert/convert.service';
+import { PdfService } from '../convert/pdf.service';
 import { renderUploadPage } from './templates/upload-page';
 import { renderResultPage } from './templates/result-page';
 
@@ -25,7 +27,10 @@ const OUTPUT_ROOT = path.join(process.cwd(), 'output');
 
 @Controller()
 export class ViewsController {
-  constructor(private readonly convertService: ConvertService) {}
+  constructor(
+    private readonly convertService: ConvertService,
+    private readonly pdfService: PdfService,
+  ) {}
 
   @Get()
   index(@Res() res: Response) {
@@ -100,6 +105,54 @@ export class ViewsController {
     }));
 
     res.type('html').send(renderResultPage(viewResults, hasCustomPath ? targetDir : null));
+  }
+
+  @Post('copy-pdf')
+  @UseInterceptors(
+    FileInterceptor('pdf', {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          const sessionId = Date.now().toString();
+          (req as any)._sessionId = sessionId;
+          const dir = path.join(UPLOAD_ROOT, sessionId);
+          fs.mkdirSync(dir, { recursive: true });
+          cb(null, dir);
+        },
+        filename: (req, file, cb) => {
+          const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+          cb(null, original);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        if (path.extname(original).toLowerCase() !== '.pdf') {
+          return cb(new BadRequestException(`File "${original}" không phải .pdf`), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async copyPdf(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('password') password: string,
+    @Body('outputDir') customOutputDir: string,
+    @Res() res: Response,
+  ) {
+    if (!file) {
+      return res.type('html').send(renderUploadPage('Bạn chưa chọn file PDF.'));
+    }
+
+    try {
+      const result = await this.pdfService.copyProtectedPdf(file.path, password, customOutputDir);
+      const downloadUrl = `/download-file?path=${encodeURIComponent(result.output)}`;
+      return res
+        .type('html')
+        .send(renderResultPage([
+          { name: path.basename(file.path), success: true, downloadUrl },
+        ], result.output));
+    } catch (err: any) {
+      return res.type('html').send(renderUploadPage(`Không thể sao chép PDF: ${err.message}`));
+    }
   }
 
   @Get('download/:sessionId/:filename')
